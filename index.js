@@ -11,7 +11,7 @@ app.use(cors());
 // ---- Firebase Init ----
 const firebaseApp = firebase.initializeApp({
   credential: firebase.credential.cert(serviceAccountKey),
-  storageBucket: "blissflies",
+  storageBucket: "livey",
 });
 const bucket = firebaseApp.storage().bucket();
 
@@ -20,7 +20,7 @@ function GetdownloadURL(FolderName, FileName) {
   return new Promise((resolve, reject) => {
     const file = bucket.file(`${FolderName}/${FileName}`);
     file
-      .getSignedUrl({ action: "read", expires: "12-12-2050" })
+      .getSignedUrl({ action: "read", expires: new Date('2050-12-12') })
       .then(([url]) => resolve(url))
       .catch(reject);
   });
@@ -105,3 +105,7 @@ const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+// ✅ ---- For Firebase Functions ----
+const functions = require('firebase-functions');
+exports.api = functions.https.onRequest(app);

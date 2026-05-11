@@ -32,7 +32,7 @@ app.use(cors());
 const firebaseApp = firebase.initializeApp({
   credential: firebase.credential.cert(serviceAccountKey),
   // Use the bucket NAME, not a gs:// URL
-  storageBucket: "blissflies",
+  storageBucket: "livey",
 });
 let db = firebase.firestore();
 const bucket = firebaseApp.storage().bucket();

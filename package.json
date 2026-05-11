@@ -17,6 +17,7 @@
     "exifreader": "^3.14.1",
     "express": "^4.15.4",
     "firebase-admin": "^8.8.0",
+    "firebase-functions": "^3.24.1",
     "handlebars": "^4.0.10",
     "is-tif": "^1.0.1",
     "jszip": "^3.2.2",
