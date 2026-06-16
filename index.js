@@ -3,6 +3,7 @@ const firebase = require("firebase-admin");
 const cors = require("cors");
 const Busboy = require("busboy");
 const getRawBody = require("raw-body");
+const sharp = require("sharp");
 const serviceAccountKey = require("./serviceAccountKey.json");
 
 const app = express();
@@ -11,7 +12,7 @@ app.use(cors());
 // ---- Firebase Init ----
 const firebaseApp = firebase.initializeApp({
   credential: firebase.credential.cert(serviceAccountKey),
-  storageBucket: "livey",
+  storageBucket: "probe4shape",
 });
 const bucket = firebaseApp.storage().bucket();
 
@@ -52,33 +53,75 @@ app.post("/upload", async (req, res) => {
 
   busboy.on("file", (fieldname, file, filename, encoding, mimetype) => {
     sawFile = true;
-    const targetName = fileName || filename || `file-${Date.now()}`;
+    let targetName = fileName || filename || `file-${Date.now()}`;
     folderName = folderName || "uploads";
 
-    const gcsFile = bucket.file(`${folderName}/${targetName}`);
-    const gcsStream = gcsFile.createWriteStream({ contentType: mimetype });
-
-    gcsStream.on("error", (err) => {
+    // Buffer entire file so we can compress images before uploading
+    const chunks = [];
+    file.on("data", (chunk) => chunks.push(chunk));
+    file.on("error", (err) => {
       if (responded) return;
       responded = true;
       res.status(500).json({ error: err.message });
     });
-
-    gcsStream.on("finish", async () => {
+    file.on("end", async () => {
       try {
-        const url = await GetdownloadURL(folderName, targetName);
-        if (responded) return;
-        responded = true;
-        var returnurl = {"Returnurl":url}
-        res.status(200).send(returnurl);
+        let fileBuffer = Buffer.concat(chunks);
+        let uploadMimetype = mimetype;
+
+        // Compress images — same resolution, reduced file size
+        const compressibleTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif", "image/avif"];
+        if (compressibleTypes.includes((mimetype || "").toLowerCase())) {
+          try {
+            const img = sharp(fileBuffer);
+            const meta = await img.metadata();
+
+            if (meta.format === "png") {
+              // PNG: lossless compression, keep as PNG to preserve transparency
+              fileBuffer = await img.png({ compressionLevel: 9 }).toBuffer();
+            } else {
+              // JPEG / HEIC / HEIF / WebP / AVIF → JPEG at quality 80
+              // Same pixel dimensions, ~70-85% smaller file size for iPhone photos
+              fileBuffer = await img.jpeg({ quality: 80 }).toBuffer();
+              uploadMimetype = "image/jpeg";
+              // Fix extension if converting from HEIC/HEIF/WebP/AVIF to JPEG
+              targetName = targetName.replace(/\.(heic|heif|webp|avif)$/i, ".jpg");
+            }
+          } catch (sharpErr) {
+            // Compression failed (e.g. unsupported format) — upload original
+            console.warn("Image compression skipped:", sharpErr.message);
+          }
+        }
+
+        const gcsFile = bucket.file(`${folderName}/${targetName}`);
+        const gcsStream = gcsFile.createWriteStream({ contentType: uploadMimetype });
+
+        gcsStream.on("error", (err) => {
+          if (responded) return;
+          responded = true;
+          res.status(500).json({ error: err.message });
+        });
+
+        gcsStream.on("finish", async () => {
+          try {
+            const url = await GetdownloadURL(folderName, targetName);
+            if (responded) return;
+            responded = true;
+            res.status(200).send({ Returnurl: url });
+          } catch (err) {
+            if (responded) return;
+            responded = true;
+            res.status(500).json({ error: err.message });
+          }
+        });
+
+        gcsStream.end(fileBuffer);
       } catch (err) {
         if (responded) return;
         responded = true;
         res.status(500).json({ error: err.message });
       }
     });
-
-    file.pipe(gcsStream);
   });
 
   busboy.on("finish", () => {
@@ -91,6 +134,11 @@ app.post("/upload", async (req, res) => {
     }
   });
 
+  if (req.rawBody) {
+    busboy.end(req.rawBody);
+    return;
+  }
+
   getRawBody(req, { length: req.headers["content-length"], limit: "200mb" }, (err, body) => {
     if (err) return res.status(400).json({ error: err.message });
     busboy.end(body);
@@ -102,9 +150,11 @@ app.get("/", (req, res) => res.send("Cloud Run service is live ✅"));
 
 // ✅ ---- Required for Cloud Run (Source) ----
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
 
 // ✅ ---- For Firebase Functions ----
 const functions = require('firebase-functions');
